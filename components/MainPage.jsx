@@ -1,19 +1,15 @@
 import { useEffect, useState } from "react";
 import Spinner from "./Spinner";
-import { getRecords } from "../utils/recordsFunctions";
-import { deleteRecord } from "../utils/recordsFunctions";
-import { updateRecord } from "../utils/recordsFunctions";
+import { getRecords, deleteRecord, updateRecord, createRecord } from "../utils/recordsFunctions";
 import MusicForm from "./MusicForm";
 import Link from "next/link";
 
 const useDebounce = (value, delay = 300) => {
     const [debounced, setDebounced] = useState(value);
-
     useEffect(() => {
         const handler = setTimeout(() => setDebounced(value), delay);
         return () => clearTimeout(handler);
     }, [value, delay]);
-
     return debounced;
 };
 
@@ -25,14 +21,53 @@ const MainPage = () => {
     const debouncedQuery = useDebounce(query);
     const [editRecord, setEditRecord] = useState(null);
     const [showEditForm, setShowEditForm] = useState(false);
+    const [deezerResults, setDeezerResults] = useState([]);
+    const [deezerQuery, setDeezerQuery] = useState("");
+    const [showImportSuccess, setShowImportSuccess] = useState(false);
+
+    const searchDeezer = async (query) => {
+        try {
+            const res = await fetch(`https://corsproxy.io/?https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
+            const data = await res.json();
+            return data.data;
+        } catch (error) {
+            console.error("Deezer API error:", error);
+            return [];
+        }
+    };
+
+    const handleDeezerSearch = async () => {
+        if (!deezerQuery.trim()) return;
+        const results = await searchDeezer(deezerQuery);
+        setDeezerResults(results);
+    };
+
+    const handleClearDeezer = () => {
+        setDeezerResults([]);
+        setDeezerQuery("");
+    };
+
+    const handleImport = async (track) => {
+        const newEntry = {
+            title: track.title,
+            artist: track.artist.name,
+            album: track.album.title,
+            genre: "",
+            year: new Date(track.release_date || Date.now()).getFullYear(),
+            youtubeUrl: track.link,
+            comment: "Imported from Deezer",
+            addedAt: new Date().toISOString(),
+        };
+        await createRecord(newEntry);
+        await fetchRecords();
+        setShowImportSuccess(true);
+        setTimeout(() => setShowImportSuccess(false), 3000);
+    };
 
     const fetchRecords = async (search = "") => {
         try {
-            if (isInitialLoading) {
-                setIsInitialLoading(true);
-            } else {
-                setIsFetching(true);
-            }
+            if (isInitialLoading) setIsInitialLoading(true);
+            else setIsFetching(true);
 
             const response = await getRecords(search);
             setData(response);
@@ -52,14 +87,9 @@ const MainPage = () => {
     if (isInitialLoading) return <Spinner />;
 
     const handleDelete = async (id) => {
-        const confirmed = window.confirm("Are you sure you want to delete this record?");
-        if (!confirmed) return;
-
-        try {
+        if (window.confirm("Are you sure you want to delete this record?")) {
             await deleteRecord(id);
             setData((prev) => prev.filter((item) => item._id !== id));
-        } catch (error) {
-            console.error("Failed to delete record:", error);
         }
     };
 
@@ -69,18 +99,12 @@ const MainPage = () => {
     };
 
     const handleUpdate = async (updatedData) => {
-        try {
-            await updateRecord(editRecord._id, updatedData);
-            setData((prev) =>
-                prev.map((item) =>
-                    item._id === editRecord._id ? { ...item, ...updatedData } : item
-                )
-            );
-            setShowEditForm(false);
-            setEditRecord(null);
-        } catch (error) {
-            console.error("Failed to update record:", error);
-        }
+        await updateRecord(editRecord._id, updatedData);
+        setData((prev) =>
+            prev.map((item) => (item._id === editRecord._id ? { ...item, ...updatedData } : item))
+        );
+        setShowEditForm(false);
+        setEditRecord(null);
     };
 
     return (
@@ -104,20 +128,84 @@ const MainPage = () => {
                 🎶 My Music Vault – <span className="text-blue-400">Your Timeless Collection</span>
             </h1>
 
-            <div className="flex flex-col items-center gap-6 mt-6 mb-8">
-                <input
-                    type="text"
-                    placeholder="Search a song, an artist or a year"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="w-full max-w-md px-4 py-2 border border-gray-300 rounded-xl shadow-md bg-white text-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+            {showImportSuccess && (
+                <div className="mb-4 px-4 py-2 bg-green-600 text-white font-medium rounded shadow inline-block">
+                    ✅ Song successfully imported!
+                </div>
+            )}
 
-                <Link href="/records/create">
-                    <button className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-lg shadow-lg transition-all duration-150 flex items-center">
-                        <span className="mr-2">➕</span> Add New Song
+            <div className="mt-6 mb-10 grid grid-cols-1 md:grid-cols-2 gap-10 justify-center items-start max-w-7xl mx-auto">
+                <div className="flex flex-col items-center gap-4 w-full">
+                    <input
+                        type="text"
+                        placeholder="Search a song, an artist or a year in your music vault"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-xl shadow-md bg-white text-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <Link href="/records/create">
+                        <button className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-lg shadow-lg transition-all duration-150 flex items-center">
+                            <span className="mr-2">➕</span> Add New Song
+                        </button>
+                    </Link>
+                </div>
+
+                <div className="flex flex-col items-center gap-4 w-full">
+                    <input
+                        type="text"
+                        placeholder="Search songs from Deezer..."
+                        value={deezerQuery}
+                        onChange={(e) => setDeezerQuery(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-xl bg-white text-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                    <button
+                        onClick={handleDeezerSearch}
+                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
+                    >
+                        Search
                     </button>
-                </Link>
+                    {deezerResults.length > 0 && (
+                        <button
+                            onClick={handleClearDeezer}
+                            className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
+                        >
+                            🔙 Back to My Vault Songs
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {deezerResults.length > 0 && (
+                <div className="mb-6">
+                    <button
+                        onClick={handleClearDeezer}
+                        className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
+                    >
+                        🔙 Back to My Vault Songs
+                    </button>
+                </div>
+            )}
+
+            <div className="flex flex-wrap gap-4 justify-center">
+                {deezerResults.map((track) => (
+                    <div
+                        key={track.id}
+                        className="max-w-sm p-4 bg-white border border-gray-300 rounded-lg shadow-sm text-left"
+                    >
+                        <img src={track.album.cover_medium} alt={track.album.title} className="rounded mb-2" />
+                        <h3 className="text-lg font-bold">{track.title}</h3>
+                        <p className="text-sm text-gray-600 mb-1">by {track.artist.name}</p>
+                        <audio controls className="w-full mt-2">
+                            <source src={track.preview} type="audio/mpeg" />
+                        </audio>
+                        <button
+                            onClick={() => handleImport(track)}
+                            className="mt-4 w-full bg-blue-700 hover:bg-blue-800 text-white py-1 px-4 rounded-lg text-sm"
+                        >
+                            📅 Import into Vault
+                        </button>
+                    </div>
+                ))}
             </div>
 
             {isFetching && (
@@ -142,11 +230,9 @@ const MainPage = () => {
                             <h5 className="mb-2 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
                                 {record.title}
                             </h5>
-
                             <p className="mb-1 font-medium text-gray-800 dark:text-gray-300">
                                 by {record.artist}
                             </p>
-
                             <a
                                 href={record.youtubeUrl}
                                 target="_blank"
@@ -155,7 +241,6 @@ const MainPage = () => {
                             >
                                 Ascultă pe YouTube
                             </a>
-
                             <p className="text-sm text-gray-500 dark:text-gray-400">
                                 Album: <span className="font-medium">{record.album}</span>
                             </p>
@@ -165,13 +250,11 @@ const MainPage = () => {
                             <p className="text-sm text-gray-500 dark:text-gray-400">
                                 Year: <span className="font-medium">{record.year}</span>
                             </p>
-
                             {record.comment && (
                                 <p className="text-sm italic mt-2 text-gray-300 dark:text-gray-400">
                                     “{record.comment}”
                                 </p>
                             )}
-
                             <div className="mt-4">
                                 <button
                                     type="button"
@@ -180,7 +263,6 @@ const MainPage = () => {
                                 >
                                     Update
                                 </button>
-
                                 <button
                                     type="button"
                                     onClick={() => handleDelete(record._id)}
@@ -195,6 +277,5 @@ const MainPage = () => {
             </div>
         </div>
     );
-}
-
+};
 export default MainPage;
